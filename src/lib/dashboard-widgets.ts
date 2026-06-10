@@ -10,13 +10,49 @@ export interface DashboardWidget {
 
 export const WIDGET_CATALOG: DashboardWidget[] = [
   {
+    id: 'ecosystem-health',
+    label: 'Ecosystem Health',
+    description: 'Executive health verdict with freshness and root causes',
+    category: 'health',
+    modes: ['local', 'full'],
+    defaultSize: 'full',
+    component: 'EcosystemHealthWidget',
+  },
+  {
     id: 'briefing-bar',
     label: 'Briefing Bar',
-    description: 'At-a-glance operational summary — what needs attention now',
+    description: 'At-a-glance operational summary - what needs attention now',
     category: 'metrics',
     modes: ['local', 'full'],
     defaultSize: 'full',
     component: 'BriefingBarWidget',
+  },
+  {
+    id: 'vps-compact',
+    label: 'VPS Compact',
+    description: 'Condensed VPS, gateway, and sync health for the Overview',
+    category: 'health',
+    modes: ['local', 'full'],
+    defaultSize: 'md',
+    component: 'VpsCompactWidget',
+  },
+  {
+    id: 'what-needs-tony',
+    label: 'What Needs Tony',
+    description: 'Decisions, blockers, reviews, and approvals that need the owner',
+    category: 'tasks',
+    modes: ['local', 'full'],
+    defaultSize: 'md',
+    component: 'WhatNeedsTonyWidget',
+  },
+  {
+    id: 'recent-signals',
+    label: 'Recent Signals',
+    description: 'Relevant operational signals, failures, and status changes',
+    category: 'events',
+    modes: ['local', 'full'],
+    defaultSize: 'md',
+    component: 'RecentSignalsWidget',
   },
   {
     id: 'activity-timeline',
@@ -147,21 +183,19 @@ export const WIDGET_CATALOG: DashboardWidget[] = [
 ]
 
 export const LOCAL_DEFAULT_LAYOUT = [
-  'briefing-bar',
-  'activity-timeline',
-  'fleet-status',
+  'ecosystem-health',
   'task-pipeline',
-  'system-health',
-  'quick-actions',
+  'vps-compact',
+  'what-needs-tony',
+  'recent-signals',
 ]
 
 export const GATEWAY_DEFAULT_LAYOUT = [
-  'briefing-bar',
-  'activity-timeline',
-  'fleet-status',
+  'ecosystem-health',
   'task-pipeline',
-  'system-health',
-  'quick-actions',
+  'vps-compact',
+  'what-needs-tony',
+  'recent-signals',
 ]
 
 export function getDefaultLayout(mode: 'local' | 'full'): string[] {

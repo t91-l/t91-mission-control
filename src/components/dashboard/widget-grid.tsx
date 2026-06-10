@@ -21,13 +21,21 @@ import { ActivityTimelineWidget } from './widgets/activity-timeline-widget'
 import { FleetStatusWidget } from './widgets/fleet-status-widget'
 import { TaskPipelineWidget } from './widgets/task-pipeline-widget'
 import { SystemHealthWidget } from './widgets/system-health-widget'
+import { EcosystemHealthWidget } from './widgets/ecosystem-health-widget'
+import { VpsCompactWidget } from './widgets/vps-compact-widget'
+import { WhatNeedsTonyWidget } from './widgets/what-needs-tony-widget'
+import { RecentSignalsWidget } from './widgets/recent-signals-widget'
 
 const WIDGET_COMPONENTS: Record<string, React.ComponentType<{ data: DashboardData }>> = {
+  'ecosystem-health': EcosystemHealthWidget,
   'briefing-bar': BriefingBarWidget,
   'activity-timeline': ActivityTimelineWidget,
   'fleet-status': FleetStatusWidget,
   'task-pipeline': TaskPipelineWidget,
   'system-health': SystemHealthWidget,
+  'vps-compact': VpsCompactWidget,
+  'what-needs-tony': WhatNeedsTonyWidget,
+  'recent-signals': RecentSignalsWidget,
   'metric-cards': MetricCardsWidget,
   'runtime-health': RuntimeHealthWidget,
   'gateway-health': GatewayHealthWidget,

@@ -4,6 +4,9 @@
 
 Goal: answer whether the T91 ecosystem is healthy and whether Tony needs to act.
 
+Status: first productized UI pass in progress. The approved default Overview is
+executive triage, with the Task Pipeline kept visible.
+
 Planned sections:
 
 - Ecosystem Health: single top-level state with freshness and causes.
@@ -64,3 +67,15 @@ Requirements:
 - source.
 - affected system.
 - link or pointer to diagnostic detail when available.
+
+## Productization
+
+Goal: make Mission Control reusable for Tony's other companies.
+
+Requirements:
+
+- agent-facing repository instructions in `AGENTS.md`.
+- company profile configuration instead of hardcoded company logic.
+- data contracts with explicit trust state and freshness.
+- deployment docs for private/internal installs.
+- adapters for each company's agents, tasks, monitors, and signal sources.
