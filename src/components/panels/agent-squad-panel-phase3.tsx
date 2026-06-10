@@ -99,63 +99,6 @@ export function AgentSquadPanelPhase3() {
   const [loading, setLoading] = useState(agents.length === 0)
   const [error, setError] = useState<string | null>(null)
   const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null)
-  const [autoRefresh, setAutoRefresh] = useState(true)
-  const [syncing, setSyncing] = useState(false)
-  const [syncToast, setSyncToast] = useState<string | null>(null)
-  const [showHidden, setShowHidden] = useState(false)
-
-  // Sync agents from gateway config or local disk
-  const syncFromConfig = async (source?: 'local') => {
-    setSyncing(true)
-    setSyncToast(null)
-    try {
-      const url = source === 'local' ? '/api/agents/sync?source=local' : '/api/agents/sync'
-      // raw:true keeps the original Response-based branching (apiFetch only throws
-      // on 401/403/404/5xx; a 400 with {error} must still surface as a thrown error
-      // exactly as before). redirectOnUnauthenticated:false preserves this site's
-      // custom /login?next= redirect on 401 instead of apiFetch's /login?from=.
-      let response: Response
-      try {
-        response = await apiFetch<Response>(url, {
-          method: 'POST',
-          raw: true,
-          redirectOnUnauthenticated: false,
-        })
-      } catch (apiErr) {
-        if (apiErr instanceof ApiError) {
-          if (apiErr.code === 'UNAUTHENTICATED') {
-            window.location.assign('/login?next=%2Fagents')
-            return
-          }
-          if (apiErr.code === 'FORBIDDEN') {
-            throw new Error('Admin access required for agent sync')
-          }
-          // SERVER_ERROR / NOT_FOUND / NETWORK_ERROR / PARSE_ERROR — surface the message
-          const payload = apiErr.payload
-          const payloadError =
-            payload && typeof payload === 'object' && 'error' in payload
-              ? (payload as { error?: string }).error
-              : undefined
-          throw new Error(payloadError || apiErr.message || 'Sync failed')
-        }
-        throw apiErr
-      }
-      const data = await response.json()
-      if (!response.ok) throw new Error(data.error || 'Sync failed')
-      if (source === 'local') {
-        setSyncToast(data.message || 'Local agent sync complete')
-      } else {
-        setSyncToast(`Synced ${data.synced} agents (${data.created} new, ${data.updated} updated)`)
-      }
-      fetchAgents()
-      setTimeout(() => setSyncToast(null), 5000)
-    } catch (err: any) {
-      setSyncToast(`Sync failed: ${err.message}`)
-      setTimeout(() => setSyncToast(null), 5000)
-    } finally {
-      setSyncing(false)
-    }
-  }
 
   // Fetch agents
   const fetchAgents = useCallback(async () => {
@@ -163,13 +106,12 @@ export function AgentSquadPanelPhase3() {
       setError(null)
       if (agents.length === 0) setLoading(true)
 
-      const url = showHidden ? '/api/agents?show_hidden=true' : '/api/agents'
       // raw:true preserves the original Response branching (apiFetch only throws on
       // 401/403/404/5xx; a 400 with {error} must still surface as before).
       // redirectOnUnauthenticated:false keeps this site's /login?next= redirect.
       let response: Response
       try {
-        response = await apiFetch<Response>(url, {
+        response = await apiFetch<Response>('/api/agents', {
           raw: true,
           redirectOnUnauthenticated: false,
         })
@@ -203,16 +145,10 @@ export function AgentSquadPanelPhase3() {
     } finally {
       setLoading(false)
     }
-  }, [agents.length, setAgents, showHidden])
+  }, [agents.length, setAgents])
 
   // Smart polling with visibility pause
-  useSmartPoll(fetchAgents, 30000, { enabled: autoRefresh, pauseWhenSseConnected: true })
-
-  // Re-fetch when showHidden changes
-  useEffect(() => {
-    fetchAgents()
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showHidden])
+  useSmartPoll(fetchAgents, 30000, { enabled: true, pauseWhenSseConnected: true })
 
   // Format last seen time
   const formatLastSeen = (timestamp?: number) => {
@@ -244,6 +180,8 @@ export function AgentSquadPanelPhase3() {
     acc[agent.status] = (acc[agent.status] || 0) + 1
     return acc
   }, {} as Record<string, number>)
+  const activeHeartbeatCount = agents.filter(hasRecentHeartbeat).length
+  const dataFreshness = error ? 'stale' : activeHeartbeatCount > 0 ? 'live' : 'snapshot'
 
   if (loading && agents.length === 0) {
     return <Loader variant="panel" label="Loading agents" />
@@ -252,14 +190,14 @@ export function AgentSquadPanelPhase3() {
   return (
     <div className="h-full flex flex-col">
       {/* Header */}
-      <div className="flex justify-between items-center p-4 border-b border-border flex-shrink-0">
-        <div className="flex items-center gap-4">
-          <h2 className="text-xl font-bold text-foreground">{t('title')}</h2>
+      <div className="flex justify-between items-center gap-4 p-4 border-b border-border flex-shrink-0">
+        <div className="flex items-center gap-4 min-w-0">
+          <h2 className="text-xl font-bold text-foreground">Fleet</h2>
           
           {/* Status Summary */}
-          <div className="flex gap-2 text-sm">
+          <div className="flex gap-2 text-sm shrink-0">
             {Object.entries(statusCounts).map(([status, count]) => (
-              <div key={status} className="flex items-center gap-1">
+              <div key={status} className="flex items-center gap-1" title={status}>
                 <div className={`w-2 h-2 rounded-full ${statusColors[status]}`}></div>
                 <span className="text-muted-foreground">{count}</span>
               </div>
@@ -267,45 +205,15 @@ export function AgentSquadPanelPhase3() {
           </div>
 
           {/* Active Heartbeats Indicator */}
-          <div className="flex items-center gap-1">
-            <div className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse"></div>
+          <div className="flex items-center gap-2 min-w-0">
+            <div className={`w-2 h-2 rounded-full ${dataFreshness === 'live' ? 'bg-cyan-400 animate-pulse' : dataFreshness === 'stale' ? 'bg-rose-400' : 'bg-slate-400'}`}></div>
             <span className="text-sm text-muted-foreground">
-              {t('activeHeartbeats', { count: agents.filter(hasRecentHeartbeat).length })}
+              {dataFreshness} · {activeHeartbeatCount} active heartbeats
             </span>
           </div>
         </div>
         
-        <div className="flex gap-2">
-          <Button
-            onClick={() => setAutoRefresh(!autoRefresh)}
-            variant={autoRefresh ? 'success' : 'secondary'}
-            size="sm"
-          >
-            {autoRefresh ? t('live') : t('manual')}
-          </Button>
-          <Button
-            onClick={() => syncFromConfig()}
-            disabled={syncing}
-            size="sm"
-            className="bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 hover:bg-cyan-500/30"
-          >
-            {syncing ? t('syncing') : t('syncConfig')}
-          </Button>
-          <Button
-            onClick={() => syncFromConfig('local')}
-            disabled={syncing}
-            size="sm"
-            className="bg-violet-500/20 text-violet-400 border border-violet-500/30 hover:bg-violet-500/30"
-          >
-            {t('syncLocal')}
-          </Button>
-          <Button
-            onClick={() => setShowHidden(!showHidden)}
-            variant={showHidden ? 'success' : 'secondary'}
-            size="sm"
-          >
-            {showHidden ? 'Showing hidden' : 'Show hidden'}
-          </Button>
+        <div className="flex gap-2 shrink-0">
           <Button
             onClick={fetchAgents}
             variant="secondary"
@@ -315,13 +223,6 @@ export function AgentSquadPanelPhase3() {
           </Button>
         </div>
       </div>
-
-      {/* Sync Toast */}
-      {syncToast && (
-        <div className={`p-3 m-4 rounded-lg text-sm ${syncToast.includes('failed') ? 'bg-red-500/10 border border-red-500/20 text-red-400' : 'bg-green-500/10 border border-green-500/20 text-green-400'}`}>
-          {syncToast}
-        </div>
-      )}
 
       {/* Error Display */}
       {error && (

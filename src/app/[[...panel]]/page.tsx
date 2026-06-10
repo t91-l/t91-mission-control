@@ -15,7 +15,6 @@ import { ActivityFeedPanel } from '@/components/panels/activity-feed-panel'
 import { AgentSquadPanelPhase3 } from '@/components/panels/agent-squad-panel-phase3'
 import { AgentCommsPanel } from '@/components/panels/agent-comms-panel'
 import { StandupPanel } from '@/components/panels/standup-panel'
-import { OrchestrationBar } from '@/components/panels/orchestration-bar'
 import { NotificationsPanel } from '@/components/panels/notifications-panel'
 import { UserManagementPanel } from '@/components/panels/user-management-panel'
 import { AuditTrailPanel } from '@/components/panels/audit-trail-panel'
@@ -29,7 +28,6 @@ import { GatewayControlPanel } from '@/components/panels/gateway-control-panel'
 import { SuperAdminPanel } from '@/components/panels/super-admin-panel'
 import { GitHubSyncPanel } from '@/components/panels/github-sync-panel'
 import { SkillsPanel } from '@/components/panels/skills-panel'
-import { LocalAgentsDocPanel } from '@/components/panels/local-agents-doc-panel'
 import { ChannelsPanel } from '@/components/panels/channels-panel'
 import { DebugPanel } from '@/components/panels/debug-panel'
 import { SecurityAuditPanel } from '@/components/panels/security-audit-panel'
@@ -539,13 +537,7 @@ function ContentRouter({ tab }: { tab: string }) {
     case 'tasks':
       return <TaskBoardPanel />
     case 'agents':
-      return (
-        <>
-          <OrchestrationBar />
-          {isLocal && <LocalAgentsDocPanel />}
-          <AgentSquadPanelPhase3 />
-        </>
-      )
+      return <AgentSquadPanelPhase3 />
     case 'notifications':
       return <NotificationsPanel />
     case 'standup':
