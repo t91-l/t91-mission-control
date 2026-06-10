@@ -96,12 +96,6 @@ export function OverviewTab({
   editing,
   formData,
   setFormData,
-  onSave,
-  saveBusy,
-  onStatusUpdate,
-  onWakeAgent,
-  onEdit,
-  onCancel,
   heartbeatData,
   loadingHeartbeat,
   onPerformHeartbeat
@@ -110,20 +104,11 @@ export function OverviewTab({
   editing: boolean
   formData: any
   setFormData: (data: any) => void
-  onSave: () => Promise<void>
-  saveBusy?: boolean
-  onStatusUpdate: (name: string, status: Agent['status'], activity?: string) => Promise<void>
-  onWakeAgent: (name: string, sessionKey: string) => Promise<void>
-  onEdit: () => void
-  onCancel: () => void
   heartbeatData: HeartbeatResponse | null
   loadingHeartbeat: boolean
   onPerformHeartbeat: () => Promise<void>
 }) {
   const t = useTranslations('agentDetail')
-  const [messageFrom, setMessageFrom] = useState('system')
-  const [directMessage, setDirectMessage] = useState('')
-  const [messageStatus, setMessageStatus] = useState<string | null>(null)
   const [availableModels, setAvailableModels] = useState<Array<{ alias: string; description?: string }>>([])
 
   useEffect(() => {
@@ -137,62 +122,31 @@ export function OverviewTab({
       .catch(() => {})
   }, [])
 
-  const handleSendMessage = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!directMessage.trim()) return
-    try {
-      setMessageStatus(null)
-      await apiFetch('/api/agents/message', {
-        method: 'POST',
-        body: JSON.stringify({
-          from: messageFrom || 'system',
-          to: agent.name,
-          message: directMessage
-        })
-      })
-      setDirectMessage('')
-      setMessageStatus(t('messageSent'))
-      setTimeout(() => setMessageStatus(null), 2000)
-    } catch (error) {
-      setMessageStatus(t('messageFailed'))
-    }
-  }
-
   return (
     <div className="p-5">
       <div className="grid md:grid-cols-[1fr_1fr] gap-5">
         {/* Left Column — Agent Details */}
         <div className="space-y-4">
-          {/* Status + Actions row */}
+          {/* Status + Health row */}
           <div className="flex items-center gap-2">
             {(['idle', 'busy', 'offline'] as const).map(status => (
-              <button
+              <span
                 key={status}
-                onClick={() => onStatusUpdate(agent.name, status)}
-                className={`px-3 py-1 text-xs rounded-full border transition-colors ${
+                className={`px-3 py-1 text-xs rounded-full border ${
                   agent.status === status
                     ? status === 'idle' ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
                     : status === 'busy' ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
                     : 'bg-slate-500/20 text-slate-300 border-slate-500/40'
-                    : 'bg-transparent text-muted-foreground border-border hover:border-foreground/30 hover:text-foreground'
+                    : 'bg-transparent text-muted-foreground border-border'
                 }`}
               >
                 {status}
-              </button>
+              </span>
             ))}
-            {agent.session_key && (
-              <button
-                onClick={() => onWakeAgent(agent.name, agent.session_key!)}
-                className="ml-auto px-3 py-1 text-xs rounded-full border border-cyan-500/30 bg-cyan-500/10 text-cyan-300 hover:bg-cyan-500/20 transition-colors"
-              >
-                Wake
-              </button>
-            )}
             <button
               onClick={onPerformHeartbeat}
               disabled={loadingHeartbeat}
-              className="px-3 py-1 text-xs rounded-full border border-border text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-colors disabled:opacity-50 ml-auto"
-              style={agent.session_key ? { marginLeft: 0 } : undefined}
+              className="ml-auto px-3 py-1 text-xs rounded-full border border-border text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-colors disabled:opacity-50"
             >
               {loadingHeartbeat ? '...' : t('heartbeat')}
             </button>
@@ -302,58 +256,53 @@ export function OverviewTab({
             </div>
           )}
 
-          {/* Edit / Save */}
-          <div className="flex gap-2 pt-1">
-            {editing ? (
-              <>
-                <Button onClick={onSave} size="sm" disabled={saveBusy}>
-                  {saveBusy ? (
-                    <span className="flex items-center gap-1.5">
-                      <svg className="w-3 h-3 animate-spin" viewBox="0 0 16 16" fill="none">
-                        <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="2" strokeDasharray="28" strokeDashoffset="8" />
-                      </svg>
-                      {t('saving')}
-                    </span>
-                  ) : t('save')}
-                </Button>
-                <Button onClick={onCancel} variant="secondary" size="sm" disabled={saveBusy}>{t('cancel')}</Button>
-              </>
-            ) : (
-              <Button onClick={onEdit} variant="secondary" size="sm">{t('edit')}</Button>
-            )}
+          <div className="rounded-md border border-cyan-500/20 bg-cyan-500/10 px-3 py-2 text-xs text-cyan-100">
+            Mission Control is read-only here. Agent changes and commands stay outside this cockpit.
           </div>
         </div>
 
-        {/* Right Column — Direct Message */}
-        <div className="border border-border rounded-lg p-4 flex flex-col">
-          <div className="flex items-center justify-between mb-3">
-            <h4 className="text-sm font-medium text-foreground">{t('message')}</h4>
-            {messageStatus && (
-              <span className={`text-xs ${messageStatus === 'Sent' ? 'text-green-400' : 'text-rose-400'}`}>
-                {messageStatus}
-              </span>
-            )}
+        {/* Right Column — Governance Snapshot */}
+        <div className="border border-border rounded-lg p-4 flex flex-col gap-4">
+          <div>
+            <h4 className="text-sm font-medium text-foreground">Governance snapshot</h4>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Operational context collected for inspection only.
+            </p>
           </div>
-          <form onSubmit={handleSendMessage} className="flex flex-col flex-1 gap-2">
-            <input
-              type="text"
-              value={messageFrom}
-              onChange={(e) => setMessageFrom(e.target.value)}
-              className="bg-surface-1 text-foreground rounded px-2.5 py-1.5 text-xs border border-border focus:outline-none focus:ring-1 focus:ring-primary/50"
-              placeholder={t('from')}
-            />
-            <textarea
-              value={directMessage}
-              onChange={(e) => setDirectMessage(e.target.value)}
-              className="flex-1 min-h-[80px] bg-surface-1 text-foreground rounded px-2.5 py-2 text-sm border border-border focus:outline-none focus:ring-1 focus:ring-primary/50 resize-none"
-              placeholder={t('sendMessagePlaceholder', { name: agent.name })}
-            />
-            <div className="flex justify-end">
-              <Button type="submit" size="sm" disabled={!directMessage.trim()}>
-                {t('send')}
-              </Button>
+
+          <div className="grid grid-cols-2 gap-3 text-xs">
+            <div className="rounded-md bg-surface-1/60 border border-border/60 p-3">
+              <div className="text-muted-foreground">Data mode</div>
+              <div className="mt-1 font-medium text-foreground">Read-only</div>
             </div>
-          </form>
+            <div className="rounded-md bg-surface-1/60 border border-border/60 p-3">
+              <div className="text-muted-foreground">Session</div>
+              <div className="mt-1 font-medium text-foreground">{agent.session_key ? 'Connected' : 'Not linked'}</div>
+            </div>
+            <div className="rounded-md bg-surface-1/60 border border-border/60 p-3">
+              <div className="text-muted-foreground">Files</div>
+              <div className="mt-1 font-medium text-foreground">Inspectable</div>
+            </div>
+            <div className="rounded-md bg-surface-1/60 border border-border/60 p-3">
+              <div className="text-muted-foreground">Commands</div>
+              <div className="mt-1 font-medium text-foreground">Disabled</div>
+            </div>
+          </div>
+
+          <div className="space-y-2 text-xs text-muted-foreground">
+            <div className="flex items-center justify-between border-b border-border/50 pb-2">
+              <span>Last activity</span>
+              <span className="text-foreground">{agent.last_activity || 'No recent activity'}</span>
+            </div>
+            <div className="flex items-center justify-between border-b border-border/50 pb-2">
+              <span>Last seen</span>
+              <span className="text-foreground">{agent.last_seen ? new Date(agent.last_seen * 1000).toLocaleString() : 'Never'}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span>Control surface</span>
+              <span className="text-foreground">External only</span>
+            </div>
+          </div>
         </div>
       </div>
     </div>

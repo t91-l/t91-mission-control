@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useTranslations } from 'next-intl'
 import { Button } from '@/components/ui/button'
 import { Loader } from '@/components/ui/loader'
@@ -18,8 +18,7 @@ import {
   ToolsTab,
   ChannelsTab,
   CronTab,
-  ModelsTab,
-  CreateAgentModal
+  ModelsTab
 } from './agent-detail-tabs'
 import { formatModelName, buildTaskStatParts } from '@/lib/agent-card-helpers'
 import { apiFetch, ApiError } from '@/lib/api-client'
@@ -100,8 +99,6 @@ export function AgentSquadPanelPhase3() {
   const [loading, setLoading] = useState(agents.length === 0)
   const [error, setError] = useState<string | null>(null)
   const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null)
-  const [showCreateModal, setShowCreateModal] = useState(false)
-  const [showQuickSpawnModal, setShowQuickSpawnModal] = useState(false)
   const [autoRefresh, setAutoRefresh] = useState(true)
   const [syncing, setSyncing] = useState(false)
   const [syncToast, setSyncToast] = useState<string | null>(null)
@@ -211,125 +208,11 @@ export function AgentSquadPanelPhase3() {
   // Smart polling with visibility pause
   useSmartPoll(fetchAgents, 30000, { enabled: autoRefresh, pauseWhenSseConnected: true })
 
-  // Update agent status
-  const updateAgentStatus = async (agentName: string, status: Agent['status'], activity?: string) => {
-    try {
-      // apiFetch throws on any non-2xx, matching the original's single generic
-      // failure path. redirectOnUnauthenticated:false preserves the original
-      // behavior (a 401 here surfaced as a generic error, not a redirect).
-      await apiFetch('/api/agents', {
-        method: 'PUT',
-        body: JSON.stringify({
-          name: agentName,
-          status,
-          last_activity: activity || `Status changed to ${status}`
-        }),
-        redirectOnUnauthenticated: false,
-      })
-
-      // Update store state
-      setAgents(agents.map(agent =>
-        agent.name === agentName
-          ? {
-              ...agent,
-              status,
-              last_activity: activity || `Status changed to ${status}`,
-              last_seen: Math.floor(Date.now() / 1000),
-              updated_at: Math.floor(Date.now() / 1000)
-            }
-          : agent
-      ))
-    } catch (error) {
-      log.error('Failed to update agent status:', error)
-      setError('Failed to update agent status')
-    }
-  }
-
-  // Wake agent via session_send
-  const wakeAgent = async (agentName: string, sessionKey: string) => {
-    try {
-      // apiFetch throws on any non-2xx; the existing catch below sets a fixed
-      // error message (it never used data.error), so the throw is sufficient.
-      // redirectOnUnauthenticated:false preserves the original no-redirect behavior.
-      await apiFetch(`/api/agents/${agentName}/wake`, {
-        method: 'POST',
-        body: JSON.stringify({
-          message: `🤖 **Wake Up Call**\n\nAgent ${agentName}, you have been manually woken up.\nCheck Mission Control for any pending tasks or notifications.\n\n⏰ ${new Date().toLocaleString()}`
-        }),
-        redirectOnUnauthenticated: false,
-      })
-
-      await updateAgentStatus(agentName, 'idle', 'Manually woken via session')
-    } catch (error) {
-      log.error('Failed to wake agent:', error)
-      setError('Failed to wake agent')
-    }
-  }
-
   // Re-fetch when showHidden changes
   useEffect(() => {
     fetchAgents()
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showHidden])
-
-  const toggleAgentHidden = async (agentId: number, hide: boolean) => {
-    try {
-      // apiFetch throws on any non-2xx; the catch below sets a fixed error message.
-      // redirectOnUnauthenticated:false preserves the original no-redirect behavior.
-      await apiFetch(`/api/agents/${agentId}/hide`, {
-        method: hide ? 'POST' : 'DELETE',
-        redirectOnUnauthenticated: false,
-      })
-      fetchAgents()
-    } catch (error) {
-      log.error('Failed to toggle agent visibility:', error)
-      setError('Failed to update agent visibility')
-    }
-  }
-
-  const deleteAgent = async (agentId: number, removeWorkspace: boolean) => {
-    const previousAgents = agents
-    setAgents(agents.filter((agent) => agent.id !== agentId))
-
-    // raw:true keeps the original Response branching so the error body (payload.error)
-    // is read on any non-ok status, exactly as before. apiFetch throws on 401/403/404/5xx
-    // before returning, so the catch reproduces the optimistic-update rollback + rethrow.
-    // redirectOnUnauthenticated:false preserves the original no-redirect behavior.
-    let response: Response
-    try {
-      response = await apiFetch<Response>(`/api/agents/${agentId}`, {
-        method: 'DELETE',
-        body: JSON.stringify({ remove_workspace: removeWorkspace }),
-        raw: true,
-        redirectOnUnauthenticated: false,
-      })
-    } catch (apiErr) {
-      setAgents(previousAgents)
-      if (apiErr instanceof ApiError) {
-        const payload = apiErr.payload
-        const payloadError =
-          payload && typeof payload === 'object' && 'error' in payload
-            ? (payload as { error?: string }).error
-            : undefined
-        throw new Error(payloadError || 'Failed to delete agent')
-      }
-      throw apiErr
-    }
-
-    const payload = await response.json().catch(() => ({}))
-    if (!response.ok) {
-      setAgents(previousAgents)
-      throw new Error(payload?.error || 'Failed to delete agent')
-    }
-
-    setSyncToast(
-      removeWorkspace
-        ? `Deleted agent and workspace: ${payload?.deleted || agentId}`
-        : `Deleted agent: ${payload?.deleted || agentId}`,
-    )
-    await fetchAgents()
-    setTimeout(() => setSyncToast(null), 5000)
-  }
 
   // Format last seen time
   const formatLastSeen = (timestamp?: number) => {
@@ -422,12 +305,6 @@ export function AgentSquadPanelPhase3() {
             size="sm"
           >
             {showHidden ? 'Showing hidden' : 'Show hidden'}
-          </Button>
-          <Button
-            onClick={() => setShowCreateModal(true)}
-            size="sm"
-          >
-            {t('addAgent')}
           </Button>
           <Button
             onClick={fetchAgents}
@@ -540,61 +417,22 @@ export function AgentSquadPanelPhase3() {
                     </div>
                   )}
 
-                  {/* Footer: last seen + actions */}
+                  {/* Footer: last seen + inspect */}
                   <div className="flex items-center justify-between mt-2 pt-2 border-t border-border/30">
                     <span className="text-[11px] text-muted-foreground/70">
                       {formatLastSeen(agent.last_seen)}
                     </span>
                     <div className="flex gap-1">
-                      {agent.session_key ? (
-                        <Button
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            wakeAgent(agent.name, agent.session_key!)
-                          }}
-                          size="xs"
-                          variant="ghost"
-                          className="h-6 px-2 text-xs text-cyan-300 hover:bg-cyan-500/15 hover:text-cyan-200"
-                          title="Wake agent via session"
-                        >
-                          {t('wake')}
-                        </Button>
-                      ) : (
-                        <Button
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            updateAgentStatus(agent.name, 'idle', 'Manually activated')
-                          }}
-                          disabled={agent.status === 'idle'}
-                          size="xs"
-                          variant="ghost"
-                          className="h-6 px-2 text-xs"
-                        >
-                          {t('wake')}
-                        </Button>
-                      )}
                       <Button
                         onClick={(e) => {
                           e.stopPropagation()
                           setSelectedAgent(agent)
-                          setShowQuickSpawnModal(true)
                         }}
                         size="xs"
                         variant="ghost"
-                        className="h-6 px-2 text-xs text-blue-300 hover:bg-blue-500/15 hover:text-blue-200"
+                        className="h-6 px-2 text-xs text-cyan-300 hover:bg-cyan-500/15 hover:text-cyan-200"
                       >
-                        {t('spawn')}
-                      </Button>
-                      <Button
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          toggleAgentHidden(agent.id, !agent.hidden)
-                        }}
-                        size="xs"
-                        variant="ghost"
-                        className="h-6 px-2 text-xs text-slate-400 hover:bg-slate-500/15 hover:text-slate-300"
-                      >
-                        {agent.hidden ? 'Unhide' : 'Hide'}
+                        Inspect
                       </Button>
                     </div>
                   </div>
@@ -611,29 +449,6 @@ export function AgentSquadPanelPhase3() {
           agent={selectedAgent}
           onClose={() => setSelectedAgent(null)}
           onUpdate={fetchAgents}
-          onStatusUpdate={updateAgentStatus}
-          onWakeAgent={wakeAgent}
-          onDelete={deleteAgent}
-        />
-      )}
-
-      {/* Create Agent Modal */}
-      {showCreateModal && (
-        <CreateAgentModal
-          onClose={() => setShowCreateModal(false)}
-          onCreated={fetchAgents}
-        />
-      )}
-
-      {/* Quick Spawn Modal */}
-      {showQuickSpawnModal && selectedAgent && (
-        <QuickSpawnModal
-          agent={selectedAgent}
-          onClose={() => {
-            setShowQuickSpawnModal(false)
-            setSelectedAgent(null)
-          }}
-          onSpawned={fetchAgents}
         />
       )}
     </div>
@@ -644,21 +459,14 @@ export function AgentSquadPanelPhase3() {
 function AgentDetailModalPhase3({
   agent,
   onClose,
-  onUpdate,
-  onStatusUpdate,
-  onWakeAgent,
-  onDelete
+  onUpdate
 }: {
   agent: Agent
   onClose: () => void
   onUpdate: () => void
-  onStatusUpdate: (name: string, status: Agent['status'], activity?: string) => Promise<void>
-  onWakeAgent: (name: string, sessionKey: string) => Promise<void>
-  onDelete: (agentId: number, removeWorkspace: boolean) => Promise<void>
 }) {
   const [agentState, setAgentState] = useState<Agent & { config?: any; working_memory?: string }>(agent as Agent & { config?: any; working_memory?: string })
   const [activeTab, setActiveTab] = useState<'overview' | 'soul' | 'memory' | 'config' | 'tasks' | 'activity' | 'files' | 'tools' | 'channels' | 'cron' | 'models'>('overview')
-  const [editing, setEditing] = useState(false)
   const [formData, setFormData] = useState({
     role: agent.role,
     session_key: agent.session_key || '',
@@ -673,24 +481,6 @@ function AgentDetailModalPhase3({
   const [soulTemplates, setSoulTemplates] = useState<SoulTemplate[]>([])
   const [heartbeatData, setHeartbeatData] = useState<HeartbeatResponse | null>(null)
   const [loadingHeartbeat, setLoadingHeartbeat] = useState(false)
-  const [deleteBusy, setDeleteBusy] = useState(false)
-  const [deleteError, setDeleteError] = useState<string | null>(null)
-  const [showDeleteMenu, setShowDeleteMenu] = useState(false)
-  const [saveBusy, setSaveBusy] = useState(false)
-  const deleteMenuRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
-      if (deleteBusy) return
-      if (deleteMenuRef.current && !deleteMenuRef.current.contains(e.target as Node)) {
-        setShowDeleteMenu(false)
-      }
-    }
-    if (showDeleteMenu) {
-      document.addEventListener('mousedown', handleClickOutside)
-    }
-    return () => document.removeEventListener('mousedown', handleClickOutside)
-  }, [showDeleteMenu, deleteBusy])
 
   useEffect(() => {
     setAgentState(agent as Agent & { config?: any; working_memory?: string })
@@ -818,30 +608,6 @@ function AgentDetailModalPhase3({
     }
   }
 
-  const handleSave = async () => {
-    setSaveBusy(true)
-    try {
-      // apiFetch throws on any non-2xx, matching the original throw-on-not-ok.
-      // The catch below only logs. redirectOnUnauthenticated:false preserves the
-      // original no-redirect behavior on auth failure.
-      await apiFetch('/api/agents', {
-        method: 'PUT',
-        body: JSON.stringify({
-          name: agentState.name,
-          ...formData
-        }),
-        redirectOnUnauthenticated: false,
-      })
-
-      setEditing(false)
-      onUpdate()
-    } catch (error) {
-      log.error('Failed to update agent:', error)
-    } finally {
-      setSaveBusy(false)
-    }
-  }
-
   const handleSoulSave = async (content: string, templateName?: string) => {
     try {
       // apiFetch throws on any non-2xx, matching the original throw-on-not-ok.
@@ -934,23 +700,6 @@ function AgentDetailModalPhase3({
     { id: 'activity', label: 'Activity', icon: 'A' }
   ]
 
-  const handleDelete = async (removeWorkspace: boolean) => {
-    const scope = removeWorkspace ? 'agent and workspace' : 'agent'
-    const confirmed = window.confirm(`Delete ${scope} for "${agentState.name}"? This cannot be undone.`)
-    if (!confirmed) return
-
-    setDeleteBusy(true)
-    setDeleteError(null)
-    try {
-      await onDelete(agentState.id, removeWorkspace)
-      onClose()
-    } catch (error: any) {
-      setDeleteError(error?.message || `Failed to delete ${scope}`)
-    } finally {
-      setDeleteBusy(false)
-    }
-  }
-
   return (
     <div
       className="fixed inset-0 z-50 bg-black/70 backdrop-blur-md flex items-center justify-center p-4"
@@ -986,51 +735,6 @@ function AgentDetailModalPhase3({
               </div>
             </div>
             <div className="flex items-center gap-1.5">
-              <div className="relative" ref={deleteMenuRef}>
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  className="text-muted-foreground hover:text-rose-400"
-                  title="Delete agent"
-                  onClick={() => setShowDeleteMenu(prev => !prev)}
-                >
-                  <svg className="w-4 h-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M2 4h12M5.33 4V2.67a1.33 1.33 0 0 1 1.34-1.34h2.66a1.33 1.33 0 0 1 1.34 1.34V4M12.67 4v9.33a1.33 1.33 0 0 1-1.34 1.34H4.67a1.33 1.33 0 0 1-1.34-1.34V4" />
-                  </svg>
-                </Button>
-                {showDeleteMenu && (
-                  <div className="absolute right-0 top-full mt-1 flex flex-col gap-1 bg-card border border-border rounded-md shadow-xl p-1.5 z-10 min-w-[180px]">
-                    <button
-                      onClick={() => handleDelete(false)}
-                      disabled={deleteBusy}
-                      className="text-left text-xs px-2.5 py-1.5 rounded text-rose-300 hover:bg-rose-500/10 transition-colors disabled:opacity-50"
-                    >
-                      {deleteBusy ? (
-                        <span className="flex items-center gap-1.5">
-                          <svg className="w-3 h-3 animate-spin" viewBox="0 0 16 16" fill="none">
-                            <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="2" strokeDasharray="28" strokeDashoffset="8" />
-                          </svg>
-                          Deleting...
-                        </span>
-                      ) : 'Delete agent'}
-                    </button>
-                    <button
-                      onClick={() => handleDelete(true)}
-                      disabled={deleteBusy}
-                      className="text-left text-xs px-2.5 py-1.5 rounded text-rose-400 hover:bg-rose-500/10 transition-colors disabled:opacity-50"
-                    >
-                      {deleteBusy ? (
-                        <span className="flex items-center gap-1.5">
-                          <svg className="w-3 h-3 animate-spin" viewBox="0 0 16 16" fill="none">
-                            <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="2" strokeDasharray="28" strokeDashoffset="8" />
-                          </svg>
-                          Deleting...
-                        </span>
-                      ) : 'Delete agent + workspace'}
-                    </button>
-                  </div>
-                )}
-              </div>
               <Button
                 onClick={onClose}
                 aria-label="Close agent details"
@@ -1044,12 +748,6 @@ function AgentDetailModalPhase3({
               </Button>
             </div>
           </div>
-
-          {deleteError && (
-            <div className="mb-3 rounded-md border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-xs text-rose-200">
-              {deleteError}
-            </div>
-          )}
 
           {/* Tab Navigation */}
           <div className="flex gap-0 overflow-x-auto -mb-px">
@@ -1074,15 +772,9 @@ function AgentDetailModalPhase3({
           {activeTab === 'overview' && (
             <OverviewTab
               agent={agentState}
-              editing={editing}
+              editing={false}
               formData={formData}
               setFormData={setFormData}
-              onSave={handleSave}
-              saveBusy={saveBusy}
-              onStatusUpdate={onStatusUpdate}
-              onWakeAgent={onWakeAgent}
-              onEdit={() => setEditing(true)}
-              onCancel={() => setEditing(false)}
               heartbeatData={heartbeatData}
               loadingHeartbeat={loadingHeartbeat}
               onPerformHeartbeat={performHeartbeat}
@@ -1143,197 +835,6 @@ function AgentDetailModalPhase3({
             <ActivityTab agent={agentState} />
           )}
         </div>
-      </div>
-    </div>
-  )
-}
-
-// Quick Spawn Modal Component
-function QuickSpawnModal({
-  agent,
-  onClose,
-  onSpawned
-}: {
-  agent: Agent
-  onClose: () => void
-  onSpawned: () => void
-}) {
-  const [spawnData, setSpawnData] = useState({
-    task: '',
-    model: 'sonnet',
-    label: `${agent.name}-subtask-${Date.now()}`,
-    timeoutSeconds: 300
-  })
-  const [isSpawning, setIsSpawning] = useState(false)
-  const [spawnResult, setSpawnResult] = useState<any>(null)
-
-  const models = [
-    { id: 'haiku', name: 'Claude Haiku', cost: '$0.25/1K', speed: 'Ultra Fast' },
-    { id: 'sonnet', name: 'Claude Sonnet', cost: '$3.00/1K', speed: 'Fast' },
-    { id: 'opus', name: 'Claude Opus', cost: '$15.00/1K', speed: 'Slow' },
-    { id: 'groq-fast', name: 'Groq Llama 8B', cost: '$0.05/1K', speed: '840 tok/s' },
-    { id: 'groq', name: 'Groq Llama 70B', cost: '$0.59/1K', speed: '150 tok/s' },
-    { id: 'deepseek', name: 'DeepSeek R1', cost: 'FREE', speed: 'Local' },
-  ]
-
-  const handleSpawn = async () => {
-    if (!spawnData.task.trim()) {
-      alert('Please enter a task description')
-      return
-    }
-
-    setIsSpawning(true)
-    try {
-      // Graceful: a non-ok response is surfaced via alert(result.error), NOT thrown,
-      // and must not fall into the "Network error occurred" catch. raw:true keeps the
-      // original Response branching; the inner catch reproduces the else-branch alert
-      // for the statuses apiFetch throws on (401/403/404/5xx) using the error payload.
-      // redirectOnUnauthenticated:false preserves the original no-redirect behavior.
-      let response: Response
-      try {
-        response = await apiFetch<Response>('/api/spawn', {
-          method: 'POST',
-          body: JSON.stringify({
-            ...spawnData,
-            parentAgent: agent.name,
-            sessionKey: agent.session_key
-          }),
-          raw: true,
-          redirectOnUnauthenticated: false,
-        })
-      } catch (apiErr) {
-        if (apiErr instanceof ApiError && apiErr.code !== 'NETWORK_ERROR') {
-          const payload = apiErr.payload
-          const payloadError =
-            payload && typeof payload === 'object' && 'error' in payload
-              ? (payload as { error?: string }).error
-              : undefined
-          alert(payloadError || 'Failed to spawn agent')
-          return
-        }
-        throw apiErr
-      }
-
-      const result = await response.json()
-      if (response.ok) {
-        setSpawnResult(result)
-        onSpawned()
-
-        // Auto-close after 2 seconds if successful
-        setTimeout(() => {
-          onClose()
-        }, 2000)
-      } else {
-        alert(result.error || 'Failed to spawn agent')
-      }
-    } catch (error) {
-      log.error('Spawn failed:', error)
-      alert('Network error occurred')
-    } finally {
-      setIsSpawning(false)
-    }
-  }
-
-  return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="bg-card border border-border rounded-lg max-w-md w-full p-6">
-        <div className="flex justify-between items-center mb-4">
-          <h3 className="text-lg font-bold text-foreground">
-            Quick Spawn for {agent.name}
-          </h3>
-          <Button onClick={onClose} variant="ghost" size="icon-sm" className="text-2xl">×</Button>
-        </div>
-
-        {spawnResult ? (
-          <div className="space-y-4">
-            <div className="bg-green-500/10 border border-green-500/20 text-green-400 p-3 rounded-lg text-sm">
-              Agent spawned successfully!
-            </div>
-            <div className="text-sm text-foreground/80">
-              <p><strong>Agent ID:</strong> {spawnResult.agentId}</p>
-              <p><strong>Session:</strong> {spawnResult.sessionId}</p>
-              <p><strong>Model:</strong> {spawnResult.model}</p>
-            </div>
-          </div>
-        ) : (
-          <div className="space-y-4">
-            {/* Task Description */}
-            <div>
-              <label className="block text-sm font-medium text-foreground/80 mb-2">
-                Task Description *
-              </label>
-              <textarea
-                value={spawnData.task}
-                onChange={(e) => setSpawnData(prev => ({ ...prev, task: e.target.value }))}
-                placeholder={`Delegate a subtask to ${agent.name}...`}
-                className="w-full h-24 px-3 py-2 bg-surface-1 border border-border rounded text-foreground placeholder-muted-foreground focus:border-primary/50 focus:ring-1 focus:ring-primary/50 resize-none"
-              />
-            </div>
-
-            {/* Model Selection */}
-            <div>
-              <label className="block text-sm font-medium text-foreground/80 mb-2">
-                Model
-              </label>
-              <select
-                value={spawnData.model}
-                onChange={(e) => setSpawnData(prev => ({ ...prev, model: e.target.value }))}
-                className="w-full px-3 py-2 bg-surface-1 border border-border rounded text-foreground focus:border-primary/50 focus:ring-1 focus:ring-primary/50"
-              >
-                {models.map(model => (
-                  <option key={model.id} value={model.id}>
-                    {model.name} - {model.cost} ({model.speed})
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {/* Agent Label */}
-            <div>
-              <label className="block text-sm font-medium text-foreground/80 mb-2">
-                Agent Label
-              </label>
-              <input
-                type="text"
-                value={spawnData.label}
-                onChange={(e) => setSpawnData(prev => ({ ...prev, label: e.target.value }))}
-                className="w-full px-3 py-2 bg-surface-1 border border-border rounded text-foreground focus:border-primary/50 focus:ring-1 focus:ring-primary/50"
-              />
-            </div>
-
-            {/* Timeout */}
-            <div>
-              <label className="block text-sm font-medium text-foreground/80 mb-2">
-                Timeout (seconds)
-              </label>
-              <input
-                type="number"
-                value={spawnData.timeoutSeconds}
-                onChange={(e) => setSpawnData(prev => ({ ...prev, timeoutSeconds: parseInt(e.target.value) }))}
-                min={30}
-                max={3600}
-                className="w-full px-3 py-2 bg-surface-1 border border-border rounded text-foreground focus:border-primary/50 focus:ring-1 focus:ring-primary/50"
-              />
-            </div>
-
-            {/* Action Buttons */}
-            <div className="flex gap-3 pt-4">
-              <Button
-                onClick={handleSpawn}
-                disabled={isSpawning || !spawnData.task.trim()}
-                className="flex-1"
-              >
-                {isSpawning ? 'Spawning...' : 'Spawn Agent'}
-              </Button>
-              <Button
-                onClick={onClose}
-                variant="secondary"
-              >
-                Cancel
-              </Button>
-            </div>
-          </div>
-        )}
       </div>
     </div>
   )
