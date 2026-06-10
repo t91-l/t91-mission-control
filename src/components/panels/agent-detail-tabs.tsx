@@ -6,6 +6,11 @@ import { Button } from '@/components/ui/button'
 import { Loader } from '@/components/ui/loader'
 import { createClientLogger } from '@/lib/client-logger'
 import { apiFetch, ApiError } from '@/lib/api-client'
+import {
+  buildAgentAttention,
+  resolveModelName,
+  sessionMatchesAgent,
+} from '@/lib/agent-card-helpers'
 import Link from 'next/link'
 
 const log = createClientLogger('AgentDetailTabs')
@@ -123,39 +128,6 @@ function formatRelativeTime(timestamp?: number) {
   return new Date(timestamp).toLocaleDateString()
 }
 
-function normalizeAgentValue(value?: string | number | null) {
-  return String(value || '').trim().toLowerCase()
-}
-
-function sessionMatchesAgent(session: AgentSessionInfo, agent: Agent) {
-  const agentName = normalizeAgentValue(agent.name)
-  const agentId = normalizeAgentValue(agent.id)
-  const sessionKey = normalizeAgentValue(agent.session_key)
-  const candidates = [
-    session.agent,
-    session.key,
-    session.id,
-    session.workingDir,
-    ...(session.flags || []),
-  ].map(normalizeAgentValue)
-
-  if (sessionKey && candidates.some((candidate) => candidate === sessionKey || candidate.includes(sessionKey))) return true
-  if (agentName && candidates.some((candidate) => candidate === agentName || candidate.includes(agentName))) return true
-  if (agentId && candidates.some((candidate) => candidate === agentId || candidate.includes(`agent:${agentId}`))) return true
-  return false
-}
-
-function resolveModelName(agent: Agent, sessions: AgentSessionInfo[]) {
-  const toStr = (x: unknown): string => {
-    if (typeof x === 'string') return x
-    if (x && typeof x === 'object' && typeof (x as any).primary === 'string') return (x as any).primary
-    return ''
-  }
-  const configured = toStr((agent as any).config?.model?.primary) || toStr((agent as any).model)
-  const sessionModel = sessions.find((session) => session.model)?.model || ''
-  return configured || sessionModel || 'Default'
-}
-
 // Overview Tab Component
 export function OverviewTab({
   agent,
@@ -227,12 +199,23 @@ export function OverviewTab({
       : 'not detected'
   const lastSeenMs = agent.last_seen ? agent.last_seen * 1000 : undefined
   const statusEvidence = [
-    agent.last_seen ? `heartbeat ${formatRelativeTime(lastSeenMs)}` : 'no heartbeat',
+    agent.last_seen ? `Heartbeat: ${formatRelativeTime(lastSeenMs)}` : 'Heartbeat: no signal',
     openSessions.length > 0 ? `${openSessions.length} open session${openSessions.length === 1 ? '' : 's'}` : 'no open sessions',
     agent.taskStats?.in_progress ? `${agent.taskStats.in_progress} active task${agent.taskStats.in_progress === 1 ? '' : 's'}` : null,
     agent.status === 'error' ? 'error state' : null,
   ].filter(Boolean)
   const modelName = resolveModelName(agent, matchedSessions)
+  const attention = buildAgentAttention(agent, {
+    openSessions: openSessions.length,
+    recentSessions: recentSessions.length,
+    sessionLimit,
+    sessionsLoading: loadingSessions,
+  })
+  const attentionStyles =
+    attention.level === 'critical' ? 'border-rose-500/35 bg-rose-500/10 text-rose-100' :
+    attention.level === 'warning' ? 'border-amber-500/35 bg-amber-500/10 text-amber-100' :
+    attention.level === 'info' ? 'border-cyan-500/35 bg-cyan-500/10 text-cyan-100' :
+    'border-emerald-500/25 bg-emerald-500/10 text-emerald-100'
 
   return (
     <div className="p-5">
@@ -244,6 +227,7 @@ export function OverviewTab({
             {(['idle', 'busy', 'offline'] as const).map(status => (
               <span
                 key={status}
+                title={`Agent status: ${status}`}
                 className={`px-3 py-1 text-xs rounded-full border ${
                   agent.status === status
                     ? status === 'idle' ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
@@ -262,6 +246,27 @@ export function OverviewTab({
             >
               {loadingHeartbeat ? '...' : t('heartbeat')}
             </button>
+          </div>
+
+          <div className={`rounded-md border px-3 py-3 text-sm ${attentionStyles}`}>
+            <div className="flex items-center justify-between gap-3">
+              <h4 className="font-medium text-current">Needs attention</h4>
+              <span className="text-[11px] uppercase tracking-wide opacity-70">{attention.level}</span>
+            </div>
+            <div className="mt-2 grid gap-2 text-xs md:grid-cols-3">
+              <div>
+                <div className="opacity-60">Cause</div>
+                <div className="mt-0.5 text-current">{attention.reason}</div>
+              </div>
+              <div>
+                <div className="opacity-60">Impact</div>
+                <div className="mt-0.5 text-current">{attention.impact}</div>
+              </div>
+              <div>
+                <div className="opacity-60">Action</div>
+                <div className="mt-0.5 text-current">{attention.action}</div>
+              </div>
+            </div>
           </div>
 
           {heartbeatData && (
@@ -322,7 +327,7 @@ export function OverviewTab({
                 />
               ) : (
                 <span className="text-foreground font-mono text-xs">
-                  {agent.session_key || <span className="text-muted-foreground/50">{t('notSet')}</span>}
+                  {agent.session_key || <span className="text-muted-foreground/50">tracking unavailable</span>}
                 </span>
               )}
             </div>
@@ -359,8 +364,8 @@ export function OverviewTab({
             </div>
           )}
 
-          <div className="rounded-md border border-cyan-500/20 bg-cyan-500/10 px-3 py-2 text-xs text-cyan-100">
-            Mission Control is read-only here. Agent changes and commands stay outside this cockpit.
+          <div className="rounded-md border border-border/60 bg-surface-1/30 px-3 py-2 text-xs text-muted-foreground">
+            Control: read-only. Agent commands stay outside this cockpit.
           </div>
         </div>
 
@@ -369,7 +374,7 @@ export function OverviewTab({
           <div>
             <h4 className="text-sm font-medium text-foreground">Operational snapshot</h4>
             <p className="mt-1 text-xs text-muted-foreground">
-              Current health, runtime and session load collected for inspection only.
+              Current health, runtime and session load with the proof behind the status.
             </p>
           </div>
 
@@ -399,9 +404,9 @@ export function OverviewTab({
               </div>
             </div>
             <div className="rounded-md bg-surface-1/60 border border-border/60 p-3">
-              <div className="text-muted-foreground">Control</div>
-              <div className="mt-1 font-medium text-foreground">Read-only</div>
-              <div className="mt-1 text-[11px] text-muted-foreground">commands disabled</div>
+              <div className="text-muted-foreground">Practical risk</div>
+              <div className="mt-1 font-medium text-foreground">{attention.label}</div>
+              <div className="mt-1 text-[11px] text-muted-foreground">{attention.impact}</div>
             </div>
           </div>
 

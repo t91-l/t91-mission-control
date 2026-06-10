@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { formatModelName, buildTaskStatParts, extractWsHost } from '@/lib/agent-card-helpers'
+import {
+  formatModelName,
+  buildTaskStatParts,
+  extractWsHost,
+  buildAgentAttention,
+  sessionMatchesAgent,
+  resolveModelName,
+} from '../agent-card-helpers'
 
 describe('formatModelName', () => {
   it('strips provider prefix from model ID', () => {
@@ -94,5 +101,64 @@ describe('extractWsHost', () => {
 
   it('returns dash for malformed URL', () => {
     expect(extractWsHost('not-a-url')).toBe('—')
+  })
+})
+
+describe('sessionMatchesAgent', () => {
+  it('matches by session key', () => {
+    expect(sessionMatchesAgent({ key: 'iris-runtime-main' }, { id: 1, name: 'IRIS', session_key: 'iris-runtime' }))
+      .toBe(true)
+  })
+
+  it('matches by agent name in flags', () => {
+    expect(sessionMatchesAgent({ flags: ['agent:ARIA'] }, { id: 2, name: 'ARIA' }))
+      .toBe(true)
+  })
+})
+
+describe('resolveModelName', () => {
+  it('prefers configured model', () => {
+    expect(resolveModelName({ config: { model: { primary: 'anthropic/claude-opus-4-5' } } }, [{ model: 'openai/gpt-4o' }]))
+      .toBe('anthropic/claude-opus-4-5')
+  })
+
+  it('falls back to session model', () => {
+    expect(resolveModelName({}, [{ model: 'openai/gpt-4o' }])).toBe('openai/gpt-4o')
+  })
+
+  it('reports missing model explicitly', () => {
+    expect(resolveModelName({}, [])).toBe('not reported')
+  })
+})
+
+describe('buildAgentAttention', () => {
+  it('marks error agents as critical', () => {
+    const attention = buildAgentAttention({ status: 'error' })
+    expect(attention.level).toBe('critical')
+    expect(attention.label).toBe('Error state')
+  })
+
+  it('distinguishes implantation pending from runtime failure', () => {
+    const attention = buildAgentAttention({
+      status: 'offline',
+      last_activity: 'runtime registered; heartbeat disabled; controlled implantation pending',
+    })
+    expect(attention.level).toBe('info')
+    expect(attention.label).toBe('Implantation pending')
+  })
+
+  it('warns when session load is high', () => {
+    const attention = buildAgentAttention({ status: 'idle' }, { openSessions: 18, sessionLimit: 20 })
+    expect(attention.level).toBe('warning')
+    expect(attention.label).toBe('Session load high')
+  })
+
+  it('warns when an idle agent has active tasks', () => {
+    const attention = buildAgentAttention({
+      status: 'idle',
+      last_seen: 1_800,
+      taskStats: { in_progress: 2 },
+    }, { nowMs: 1_801_000 })
+    expect(attention.label).toBe('Task mismatch')
   })
 })

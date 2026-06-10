@@ -16,7 +16,13 @@ import {
   ChannelsTab,
   CronTab,
 } from './agent-detail-tabs'
-import { formatModelName, buildTaskStatParts } from '@/lib/agent-card-helpers'
+import {
+  formatModelName,
+  buildTaskStatParts,
+  buildAgentAttention,
+  sessionMatchesAgent,
+  type AgentSessionLike,
+} from '@/lib/agent-card-helpers'
 import { apiFetch, ApiError } from '@/lib/api-client'
 import { useMissionControl, type Agent } from '@/store'
 
@@ -89,6 +95,8 @@ export function AgentSquadPanelPhase3() {
   const [loading, setLoading] = useState(agents.length === 0)
   const [error, setError] = useState<string | null>(null)
   const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null)
+  const [sessions, setSessions] = useState<AgentSessionLike[]>([])
+  const [loadingSessions, setLoadingSessions] = useState(true)
 
   // Fetch agents
   const fetchAgents = useCallback(async () => {
@@ -137,8 +145,23 @@ export function AgentSquadPanelPhase3() {
     }
   }, [agents.length, setAgents])
 
+  const fetchSessions = useCallback(async () => {
+    try {
+      setLoadingSessions(true)
+      const data = await apiFetch<{ sessions?: AgentSessionLike[] }>('/api/sessions', {
+        redirectOnUnauthenticated: false,
+      })
+      setSessions(Array.isArray(data?.sessions) ? data.sessions : [])
+    } catch {
+      setSessions([])
+    } finally {
+      setLoadingSessions(false)
+    }
+  }, [])
+
   // Smart polling with visibility pause
   useSmartPoll(fetchAgents, 30000, { enabled: true, pauseWhenSseConnected: true })
+  useSmartPoll(fetchSessions, 30000, { enabled: true, pauseWhenSseConnected: true })
 
   // Format last seen time
   const formatLastSeen = (timestamp?: number) => {
@@ -172,6 +195,24 @@ export function AgentSquadPanelPhase3() {
   }, {} as Record<string, number>)
   const activeHeartbeatCount = agents.filter(hasRecentHeartbeat).length
   const dataFreshness = error ? 'stale' : activeHeartbeatCount > 0 ? 'live' : 'snapshot'
+  const sessionLimit = 20
+  const agentsByAttention = [...agents].sort((a, b) => {
+    const aMatches = sessions.filter((session) => sessionMatchesAgent(session, a))
+    const bMatches = sessions.filter((session) => sessionMatchesAgent(session, b))
+    const aAttention = buildAgentAttention(a, {
+      openSessions: aMatches.filter((session) => session.active).length,
+      recentSessions: aMatches.length,
+      sessionLimit,
+      sessionsLoading: loadingSessions,
+    })
+    const bAttention = buildAgentAttention(b, {
+      openSessions: bMatches.filter((session) => session.active).length,
+      recentSessions: bMatches.length,
+      sessionLimit,
+      sessionsLoading: loadingSessions,
+    })
+    return bAttention.score - aAttention.score || String(a.name).localeCompare(String(b.name))
+  })
 
   if (loading && agents.length === 0) {
     return <Loader variant="panel" label="Loading agents" />
@@ -246,9 +287,26 @@ export function AgentSquadPanelPhase3() {
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {agents.map(agent => {
+            {agentsByAttention.map(agent => {
               const modelName = formatModelName(agent.config)
               const taskStatsLine = buildTaskStatParts(agent.taskStats)
+              const matchedSessions = sessions.filter((session) => sessionMatchesAgent(session, agent))
+              const openSessions = matchedSessions.filter((session) => session.active)
+              const recentSessions = matchedSessions.filter((session) => {
+                const lastActivity = Number(session.lastActivity || 0)
+                return lastActivity > 0 && lastActivity >= Date.now() - 24 * 60 * 60 * 1000
+              })
+              const attention = buildAgentAttention(agent, {
+                openSessions: openSessions.length,
+                recentSessions: recentSessions.length,
+                sessionLimit,
+                sessionsLoading: loadingSessions,
+              })
+              const attentionStyles =
+                attention.level === 'critical' ? 'border-rose-500/35 bg-rose-500/10 text-rose-200' :
+                attention.level === 'warning' ? 'border-amber-500/35 bg-amber-500/10 text-amber-200' :
+                attention.level === 'info' ? 'border-cyan-500/35 bg-cyan-500/10 text-cyan-200' :
+                'border-emerald-500/25 bg-emerald-500/10 text-emerald-200'
 
               return (
                 <div
@@ -307,6 +365,18 @@ export function AgentSquadPanelPhase3() {
                       ))}
                     </div>
                   )}
+
+                  <div className={`mb-2 rounded-md border px-2.5 py-2 text-xs ${attentionStyles}`}>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-medium truncate">{attention.label}</span>
+                      <span className="shrink-0 text-[11px] opacity-80">
+                        {loadingSessions ? 'sessions loading' : `${openSessions.length} open`}
+                      </span>
+                    </div>
+                    <div className="mt-1 text-[11px] opacity-80 truncate" title={`${attention.reason} · ${attention.action}`}>
+                      {attention.reason}
+                    </div>
+                  </div>
 
                   {/* Footer: last seen + inspect */}
                   <div className="flex items-center justify-between mt-2 pt-2 border-t border-border/30">
