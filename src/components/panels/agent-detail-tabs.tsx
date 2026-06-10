@@ -70,6 +70,26 @@ interface HeartbeatResponse {
   message?: string
 }
 
+interface AgentSessionInfo {
+  id: string
+  key: string
+  agent?: string
+  kind?: string
+  model?: string
+  tokens?: string
+  channel?: string
+  flags?: string[]
+  active?: boolean
+  startTime?: number
+  lastActivity?: number
+  source?: string
+  totalTokens?: number
+  userMessages?: number
+  assistantMessages?: number
+  toolUses?: number
+  workingDir?: string | null
+}
+
 interface SoulTemplate {
   name: string
   description: string
@@ -88,6 +108,52 @@ const statusIcons: Record<string, string> = {
   idle: 'o',
   busy: '~',
   error: '!',
+}
+
+function formatRelativeTime(timestamp?: number) {
+  if (!timestamp) return 'Never'
+  const diffMs = Date.now() - timestamp
+  if (diffMs < 60_000) return 'now'
+  const minutes = Math.floor(diffMs / 60_000)
+  if (minutes < 60) return `${minutes}m ago`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours}h ago`
+  const days = Math.floor(hours / 24)
+  if (days < 7) return `${days}d ago`
+  return new Date(timestamp).toLocaleDateString()
+}
+
+function normalizeAgentValue(value?: string | number | null) {
+  return String(value || '').trim().toLowerCase()
+}
+
+function sessionMatchesAgent(session: AgentSessionInfo, agent: Agent) {
+  const agentName = normalizeAgentValue(agent.name)
+  const agentId = normalizeAgentValue(agent.id)
+  const sessionKey = normalizeAgentValue(agent.session_key)
+  const candidates = [
+    session.agent,
+    session.key,
+    session.id,
+    session.workingDir,
+    ...(session.flags || []),
+  ].map(normalizeAgentValue)
+
+  if (sessionKey && candidates.some((candidate) => candidate === sessionKey || candidate.includes(sessionKey))) return true
+  if (agentName && candidates.some((candidate) => candidate === agentName || candidate.includes(agentName))) return true
+  if (agentId && candidates.some((candidate) => candidate === agentId || candidate.includes(`agent:${agentId}`))) return true
+  return false
+}
+
+function resolveModelName(agent: Agent, sessions: AgentSessionInfo[]) {
+  const toStr = (x: unknown): string => {
+    if (typeof x === 'string') return x
+    if (x && typeof x === 'object' && typeof (x as any).primary === 'string') return (x as any).primary
+    return ''
+  }
+  const configured = toStr((agent as any).config?.model?.primary) || toStr((agent as any).model)
+  const sessionModel = sessions.find((session) => session.model)?.model || ''
+  return configured || sessionModel || 'Default'
 }
 
 // Overview Tab Component
@@ -110,6 +176,8 @@ export function OverviewTab({
 }) {
   const t = useTranslations('agentDetail')
   const [availableModels, setAvailableModels] = useState<Array<{ alias: string; description?: string }>>([])
+  const [sessions, setSessions] = useState<AgentSessionInfo[]>([])
+  const [loadingSessions, setLoadingSessions] = useState(true)
 
   useEffect(() => {
     apiFetch<{ models?: Array<{ alias: string; description?: string }> }>(
@@ -121,6 +189,50 @@ export function OverviewTab({
       })
       .catch(() => {})
   }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    setLoadingSessions(true)
+    apiFetch<{ sessions?: AgentSessionInfo[] }>('/api/sessions', { redirectOnUnauthenticated: false })
+      .then((data) => {
+        if (!cancelled) setSessions(Array.isArray(data?.sessions) ? data.sessions : [])
+      })
+      .catch(() => {
+        if (!cancelled) setSessions([])
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingSessions(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [agent.id, agent.name, agent.session_key])
+
+  const matchedSessions = sessions.filter((session) => sessionMatchesAgent(session, agent))
+  const openSessions = matchedSessions.filter((session) => session.active)
+  const recentCutoff = Date.now() - 24 * 60 * 60 * 1000
+  const recentSessions = matchedSessions.filter((session) => Number(session.lastActivity || 0) >= recentCutoff)
+  const sessionLimit = 20
+  const sessionLoad =
+    openSessions.length >= sessionLimit ? 'limit reached' :
+    openSessions.length >= Math.floor(sessionLimit * 0.8) ? 'approaching limit' :
+    openSessions.length > 0 ? 'healthy' :
+    loadingSessions ? 'loading' :
+    'clear'
+  const latestSession = [...matchedSessions].sort((a, b) => Number(b.lastActivity || 0) - Number(a.lastActivity || 0))[0]
+  const runtimeLabel = latestSession
+    ? [latestSession.source, latestSession.kind].filter(Boolean).join(' / ') || latestSession.kind || latestSession.source || 'detected'
+    : agent.session_key
+      ? 'linked session key'
+      : 'not detected'
+  const lastSeenMs = agent.last_seen ? agent.last_seen * 1000 : undefined
+  const statusEvidence = [
+    agent.last_seen ? `heartbeat ${formatRelativeTime(lastSeenMs)}` : 'no heartbeat',
+    openSessions.length > 0 ? `${openSessions.length} open session${openSessions.length === 1 ? '' : 's'}` : 'no open sessions',
+    agent.taskStats?.in_progress ? `${agent.taskStats.in_progress} active task${agent.taskStats.in_progress === 1 ? '' : 's'}` : null,
+    agent.status === 'error' ? 'error state' : null,
+  ].filter(Boolean)
+  const modelName = resolveModelName(agent, matchedSessions)
 
   return (
     <div className="p-5">
@@ -193,16 +305,7 @@ export function OverviewTab({
                 </select>
               ) : (
                 <span className="text-foreground font-mono text-xs">
-                  {(() => {
-                    const toStr = (x: unknown): string => {
-                      if (typeof x === 'string') return x
-                      if (x && typeof x === 'object' && typeof (x as any).primary === 'string') return (x as any).primary
-                      return ''
-                    }
-                    const p = (agent as any).config?.model?.primary
-                    const m = (agent as any).model
-                    return toStr(p) || toStr(m) || t('default')
-                  })()}
+                  {modelName || t('default')}
                 </span>
               )}
             </div>
@@ -261,46 +364,63 @@ export function OverviewTab({
           </div>
         </div>
 
-        {/* Right Column — Governance Snapshot */}
+        {/* Right Column — Operational Snapshot */}
         <div className="border border-border rounded-lg p-4 flex flex-col gap-4">
           <div>
-            <h4 className="text-sm font-medium text-foreground">Governance snapshot</h4>
+            <h4 className="text-sm font-medium text-foreground">Operational snapshot</h4>
             <p className="mt-1 text-xs text-muted-foreground">
-              Operational context collected for inspection only.
+              Current health, runtime and session load collected for inspection only.
             </p>
           </div>
 
           <div className="grid grid-cols-2 gap-3 text-xs">
             <div className="rounded-md bg-surface-1/60 border border-border/60 p-3">
-              <div className="text-muted-foreground">Data mode</div>
+              <div className="text-muted-foreground">Sessions</div>
+              <div className="mt-1 font-medium text-foreground">
+                {loadingSessions ? 'Loading' : `${openSessions.length} open`}
+              </div>
+              <div className={`mt-1 text-[11px] ${
+                sessionLoad === 'approaching limit' || sessionLoad === 'limit reached' ? 'text-amber-300' : 'text-muted-foreground'
+              }`}>
+                {recentSessions.length} recent · limit {sessionLimit} · {sessionLoad}
+              </div>
+            </div>
+            <div className="rounded-md bg-surface-1/60 border border-border/60 p-3">
+              <div className="text-muted-foreground">Runtime</div>
+              <div className="mt-1 font-medium text-foreground">{runtimeLabel}</div>
+              <div className="mt-1 text-[11px] text-muted-foreground">
+                {latestSession?.lastActivity ? `last activity ${formatRelativeTime(latestSession.lastActivity)}` : 'no session telemetry'}
+              </div>
+            </div>
+            <div className="rounded-md bg-surface-1/60 border border-border/60 p-3">
+              <div className="text-muted-foreground">Model</div>
+              <div className="mt-1 font-medium text-foreground font-mono text-[11px] truncate" title={modelName}>
+                {modelName}
+              </div>
+            </div>
+            <div className="rounded-md bg-surface-1/60 border border-border/60 p-3">
+              <div className="text-muted-foreground">Control</div>
               <div className="mt-1 font-medium text-foreground">Read-only</div>
-            </div>
-            <div className="rounded-md bg-surface-1/60 border border-border/60 p-3">
-              <div className="text-muted-foreground">Session</div>
-              <div className="mt-1 font-medium text-foreground">{agent.session_key ? 'Connected' : 'Not linked'}</div>
-            </div>
-            <div className="rounded-md bg-surface-1/60 border border-border/60 p-3">
-              <div className="text-muted-foreground">Files</div>
-              <div className="mt-1 font-medium text-foreground">Inspectable</div>
-            </div>
-            <div className="rounded-md bg-surface-1/60 border border-border/60 p-3">
-              <div className="text-muted-foreground">Commands</div>
-              <div className="mt-1 font-medium text-foreground">Disabled</div>
+              <div className="mt-1 text-[11px] text-muted-foreground">commands disabled</div>
             </div>
           </div>
 
           <div className="space-y-2 text-xs text-muted-foreground">
+            <div className="flex items-center justify-between border-b border-border/50 pb-2 gap-3">
+              <span>Status evidence</span>
+              <span className="text-foreground text-right">{statusEvidence.join(' · ')}</span>
+            </div>
             <div className="flex items-center justify-between border-b border-border/50 pb-2">
               <span>Last activity</span>
-              <span className="text-foreground">{agent.last_activity || 'No recent activity'}</span>
+              <span className="text-foreground text-right">{agent.last_activity || latestSession?.key || 'No recent activity'}</span>
             </div>
             <div className="flex items-center justify-between border-b border-border/50 pb-2">
               <span>Last seen</span>
               <span className="text-foreground">{agent.last_seen ? new Date(agent.last_seen * 1000).toLocaleString() : 'Never'}</span>
             </div>
             <div className="flex items-center justify-between">
-              <span>Control surface</span>
-              <span className="text-foreground">External only</span>
+              <span>Token load</span>
+              <span className="text-foreground">{latestSession?.tokens || 'No session data'}</span>
             </div>
           </div>
         </div>

@@ -9,16 +9,12 @@ import { createClientLogger } from '@/lib/client-logger'
 import { AgentAvatar } from '@/components/ui/agent-avatar'
 import {
   OverviewTab,
-  SoulTab,
-  MemoryTab,
   TasksTab,
   ActivityTab,
-  ConfigTab,
   FilesTab,
   ToolsTab,
   ChannelsTab,
   CronTab,
-  ModelsTab
 } from './agent-detail-tabs'
 import { formatModelName, buildTaskStatParts } from '@/lib/agent-card-helpers'
 import { apiFetch, ApiError } from '@/lib/api-client'
@@ -39,12 +35,6 @@ interface HeartbeatResponse {
   work_items?: WorkItem[]
   total_items?: number
   message?: string
-}
-
-interface SoulTemplate {
-  name: string
-  description: string
-  size: number
 }
 
 const statusColors: Record<string, string> = {
@@ -367,7 +357,7 @@ function AgentDetailModalPhase3({
   onUpdate: () => void
 }) {
   const [agentState, setAgentState] = useState<Agent & { config?: any; working_memory?: string }>(agent as Agent & { config?: any; working_memory?: string })
-  const [activeTab, setActiveTab] = useState<'overview' | 'soul' | 'memory' | 'config' | 'tasks' | 'activity' | 'files' | 'tools' | 'channels' | 'cron' | 'models'>('overview')
+  const [activeTab, setActiveTab] = useState<'overview' | 'tasks' | 'activity' | 'files' | 'tools' | 'channels' | 'cron'>('overview')
   const [formData, setFormData] = useState({
     role: agent.role,
     session_key: agent.session_key || '',
@@ -375,11 +365,6 @@ function AgentDetailModalPhase3({
     working_memory: agent.working_memory || '',
     model: (() => { const p = (agent as any).config?.model?.primary; return (typeof p === 'string' ? p : p?.primary) || '' })(),
   })
-  const [workspaceFiles, setWorkspaceFiles] = useState<{ identityMd: string; agentMd: string }>({
-    identityMd: '',
-    agentMd: '',
-  })
-  const [soulTemplates, setSoulTemplates] = useState<SoulTemplate[]>([])
   const [heartbeatData, setHeartbeatData] = useState<HeartbeatResponse | null>(null)
   const [loadingHeartbeat, setLoadingHeartbeat] = useState(false)
 
@@ -405,11 +390,8 @@ function AgentDetailModalPhase3({
       const rawGet = (path: string): Promise<Response | null> =>
         apiFetch<Response>(path, { raw: true, redirectOnUnauthenticated: false }).catch(() => null)
       try {
-        const [agentRes, soulRes, memoryRes, filesRes] = await Promise.all([
+        const [agentRes] = await Promise.all([
           rawGet(`/api/agents/${agent.id}`),
-          rawGet(`/api/agents/${agent.id}/soul`),
-          rawGet(`/api/agents/${agent.id}/memory`),
-          rawGet(`/api/agents/${agent.id}/files`),
         ])
 
         if (agentRes?.ok) {
@@ -424,24 +406,6 @@ function AgentDetailModalPhase3({
               model: (freshAgent as any).config?.model?.primary || prev.model,
             }))
           }
-        }
-
-        if (soulRes?.ok) {
-          const payload = await soulRes.json()
-          setFormData((prev) => ({ ...prev, soul_content: String(payload?.soul_content || '') }))
-        }
-
-        if (memoryRes?.ok) {
-          const payload = await memoryRes.json()
-          setFormData((prev) => ({ ...prev, working_memory: String(payload?.working_memory || '') }))
-        }
-
-        if (filesRes?.ok) {
-          const payload = await filesRes.json()
-          setWorkspaceFiles({
-            identityMd: String(payload?.files?.['identity.md']?.content || ''),
-            agentMd: String(payload?.files?.['agent.md']?.content || ''),
-          })
         }
       } catch (error) {
         log.error('Failed to load canonical agent data:', error)
@@ -461,32 +425,6 @@ function AgentDetailModalPhase3({
     if (diffHours < 24) return `${diffHours}h ago`
     return new Date(timestamp * 1000).toLocaleDateString()
   }
-
-  // Load SOUL templates
-  useEffect(() => {
-    const loadTemplates = async () => {
-      try {
-        // Graceful: only applied when response.ok; non-ok is silently ignored.
-        // raw:true keeps the .ok check; redirectOnUnauthenticated:false preserves
-        // the original no-redirect behavior on auth failure.
-        const response = await apiFetch<Response>(`/api/agents/${agent.name}/soul`, {
-          method: 'PATCH',
-          raw: true,
-          redirectOnUnauthenticated: false,
-        })
-        if (response.ok) {
-          const data = await response.json()
-          setSoulTemplates(data.templates || [])
-        }
-      } catch (error) {
-        log.error('Failed to load SOUL templates:', error)
-      }
-    }
-    
-    if (activeTab === 'soul') {
-      loadTemplates()
-    }
-  }, [activeTab, agent.name])
 
   // Perform heartbeat check
   const performHeartbeat = async () => {
@@ -509,96 +447,14 @@ function AgentDetailModalPhase3({
     }
   }
 
-  const handleSoulSave = async (content: string, templateName?: string) => {
-    try {
-      // apiFetch throws on any non-2xx, matching the original throw-on-not-ok.
-      // The catch below only logs. redirectOnUnauthenticated:false preserves the
-      // original no-redirect behavior on auth failure.
-      await apiFetch(`/api/agents/${agentState.id}/soul`, {
-        method: 'PUT',
-        body: JSON.stringify({
-          soul_content: content,
-          template_name: templateName
-        }),
-        redirectOnUnauthenticated: false,
-      })
-
-      setFormData(prev => ({ ...prev, soul_content: content }))
-      setAgentState(prev => ({ ...prev, soul_content: content }))
-      onUpdate()
-    } catch (error) {
-      log.error('Failed to update SOUL:', error)
-    }
-  }
-
-  const handleMemorySave = async (content: string, append: boolean = false) => {
-    try {
-      // apiFetch throws on any non-2xx (matching throw-on-not-ok) and returns the
-      // parsed JSON body directly on success. The catch below only logs.
-      // redirectOnUnauthenticated:false preserves the original no-redirect behavior.
-      const data = await apiFetch<{ working_memory: string }>(`/api/agents/${agentState.id}/memory`, {
-        method: 'PUT',
-        body: JSON.stringify({
-          working_memory: content,
-          append
-        }),
-        redirectOnUnauthenticated: false,
-      })
-
-      setFormData(prev => ({ ...prev, working_memory: data.working_memory }))
-      setAgentState(prev => ({ ...prev, working_memory: data.working_memory }))
-      onUpdate()
-    } catch (error) {
-      log.error('Failed to update memory:', error)
-    }
-  }
-
-  const handleWorkspaceFileSave = async (file: 'identity.md' | 'agent.md', content: string) => {
-    // raw:true keeps the original Response branching so the error body (payload.error)
-    // is read on any non-ok status, exactly as before. apiFetch throws on 401/403/404/5xx
-    // before returning, so the catch rethrows with the same payload-derived message.
-    // redirectOnUnauthenticated:false preserves the original no-redirect behavior.
-    let response: Response
-    try {
-      response = await apiFetch<Response>(`/api/agents/${agentState.id}/files`, {
-        method: 'PUT',
-        body: JSON.stringify({ file, content }),
-        raw: true,
-        redirectOnUnauthenticated: false,
-      })
-    } catch (apiErr) {
-      if (apiErr instanceof ApiError) {
-        const payload = apiErr.payload
-        const payloadError =
-          payload && typeof payload === 'object' && 'error' in payload
-            ? (payload as { error?: string }).error
-            : undefined
-        throw new Error(payloadError || `Failed to save ${file}`)
-      }
-      throw apiErr
-    }
-    const payload = await response.json().catch(() => ({}))
-    if (!response.ok) {
-      throw new Error(payload?.error || `Failed to save ${file}`)
-    }
-    setWorkspaceFiles((prev) => ({
-      ...prev,
-      ...(file === 'identity.md' ? { identityMd: content } : { agentMd: content }),
-    }))
-  }
-
   const tabs = [
     { id: 'overview', label: 'Overview', icon: 'O' },
+    { id: 'activity', label: 'Activity', icon: 'A' },
+    { id: 'tasks', label: 'Tasks', icon: 'T' },
     { id: 'files', label: 'Files', icon: 'F' },
     { id: 'tools', label: 'Tools', icon: 'W' },
-    { id: 'models', label: 'Models', icon: 'P' },
     { id: 'channels', label: 'Channels', icon: 'H' },
     { id: 'cron', label: 'Cron', icon: 'R' },
-    { id: 'soul', label: 'SOUL', icon: 'S' },
-    { id: 'memory', label: 'Memory', icon: 'M' },
-    { id: 'tasks', label: 'Tasks', icon: 'T' },
-    { id: 'config', label: 'Config', icon: 'C' },
-    { id: 'activity', label: 'Activity', icon: 'A' }
   ]
 
   return (
@@ -682,34 +538,8 @@ function AgentDetailModalPhase3({
             />
           )}
           
-          {activeTab === 'soul' && (
-            <SoulTab
-              agent={agentState}
-              soulContent={formData.soul_content}
-              templates={soulTemplates}
-              onSave={handleSoulSave}
-            />
-          )}
-          
-          {activeTab === 'memory' && (
-            <MemoryTab
-              agent={agentState}
-              workingMemory={formData.working_memory}
-              onSave={handleMemorySave}
-            />
-          )}
-          
           {activeTab === 'tasks' && (
             <TasksTab agent={agentState} />
-          )}
-          
-          {activeTab === 'config' && (
-            <ConfigTab
-              agent={agentState}
-              workspaceFiles={workspaceFiles}
-              onSaveWorkspaceFile={handleWorkspaceFileSave}
-              onSave={onUpdate}
-            />
           )}
 
           {activeTab === 'files' && (
@@ -726,10 +556,6 @@ function AgentDetailModalPhase3({
 
           {activeTab === 'cron' && (
             <CronTab agent={agentState} />
-          )}
-
-          {activeTab === 'models' && (
-            <ModelsTab agent={agentState} />
           )}
 
           {activeTab === 'activity' && (
