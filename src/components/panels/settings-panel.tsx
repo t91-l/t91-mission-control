@@ -85,6 +85,12 @@ const categoryLabels: Record<string, { label: string; icon: string; description:
 }
 
 const categoryOrder = ['general', 'security', 'profiles', 'retention', 'chat', 'gateway', 'custom']
+const SHOW_DEVELOPER_SETTINGS = false
+const SHOW_SELF_HOSTING_SETTINGS = false
+const hiddenCategoryIds = new Set([
+  ...(SHOW_DEVELOPER_SETTINGS ? [] : ['security', 'profiles']),
+  ...(SHOW_SELF_HOSTING_SETTINGS ? [] : ['gateway']),
+])
 
 // Dropdown options for subscription plan settings
 const subscriptionDropdowns: Record<string, { label: string; value: string }[]> = {
@@ -314,7 +320,11 @@ export function SettingsPanel() {
     } catch { /* non-critical */ }
   }, [])
 
-  useEffect(() => { fetchSettings(); fetchApiKeyInfo(); fetchHermesStatus() }, [fetchSettings, fetchApiKeyInfo, fetchHermesStatus])
+  useEffect(() => {
+    fetchSettings()
+    if (SHOW_DEVELOPER_SETTINGS) fetchApiKeyInfo()
+    if (SHOW_SELF_HOSTING_SETTINGS) fetchHermesStatus()
+  }, [fetchSettings, fetchApiKeyInfo, fetchHermesStatus])
 
   const handleEdit = (key: string, value: string) => {
     setEdits(prev => ({ ...prev, [key]: value }))
@@ -395,7 +405,10 @@ export function SettingsPanel() {
     )
   }
 
-  const categories = categoryOrder.filter(c => c === 'security' || c === 'profiles' || (grouped[c]?.length > 0))
+  const categories = categoryOrder.filter(c => {
+    if (hiddenCategoryIds.has(c)) return false
+    return c === 'security' || c === 'profiles' || (grouped[c]?.length > 0)
+  })
 
   return (
     <div className="p-4 md:p-6 max-w-4xl mx-auto space-y-6">
@@ -428,7 +441,7 @@ export function SettingsPanel() {
       </div>
 
       {/* Workspace Info */}
-      {currentUser?.role === 'admin' && (
+      {SHOW_SELF_HOSTING_SETTINGS && currentUser?.role === 'admin' && (
         <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-3 text-xs text-blue-300">
           <strong className="text-blue-200">{t('workspaceManagementLabel')}</strong>{' '}
           {t('workspaceManagementDesc1')}{' '}
@@ -971,7 +984,7 @@ export function SettingsPanel() {
       </div>
 
       {/* Account / OAuth connection */}
-      <AccountOAuthSection />
+      <MyAccountOAuthSection />
 
       {/* Unsaved changes bar */}
       {hasChanges && (
@@ -1102,10 +1115,10 @@ function formatLabel(key: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Account OAuth Section — shows Google connection status with disconnect option
+// My Account OAuth Section — shows Google connection status with disconnect option
 // ---------------------------------------------------------------------------
 
-function AccountOAuthSection() {
+function MyAccountOAuthSection() {
   const { currentUser } = useMissionControl()
   const [disconnecting, setDisconnecting] = useState(false)
   const [feedback, setFeedback] = useState<{ ok: boolean; text: string } | null>(null)
@@ -1136,7 +1149,7 @@ function AccountOAuthSection() {
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-2 pt-2">
-        <h3 className="text-sm font-medium text-foreground">Account</h3>
+        <h3 className="text-sm font-medium text-foreground">My Account</h3>
       </div>
 
       <div className="bg-card border border-border rounded-lg p-4">
